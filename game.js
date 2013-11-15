@@ -1,7 +1,5 @@
-var BLOCKSIZE = 52,
-    towers = [],
-    creeps = [],
-    projectiles = [],
+var BLOCKSIZE = 50,
+    addMulitple = false,
     draggingItem = false,
     mouseX = null,
     mouseY = null,
@@ -12,6 +10,11 @@ function removeFromArr(array, element) {
     if (index != -1)
         array.splice(index, 1);
 };
+
+function Player() {
+    this.gold = 100;
+    this.lives = 20
+}
 
 function Square(x, y, node) {
     this.xPos = x || 0;
@@ -31,10 +34,12 @@ Tower.prototype = new GridObj();
 
 function Tower(x, y, grid) {
     GridObj.call(this, x, y, grid);
-    this.name = 'basic';
+    this.name = 'Basic';
     this.range = 4;
     this.currCooldown = 0;
     this.cooldown = 500;
+    this.background = "blue";
+    this.cost = 40;
 };
 
 Tower.prototype.attack = function(interval) {
@@ -42,8 +47,8 @@ Tower.prototype.attack = function(interval) {
         nearestCreep = null;
     this.currCooldown -= interval;
     if (this.currCooldown <= 0) {
-        for (var i = 0; i < creeps.length; i++) {
-            var creep = creeps[i],
+        for (var i = 0; i < this.grid.creeps.length; i++) {
+            var creep = this.grid.creeps[i],
                 distance = Math.pow(creep.xPos - this.xPos, 2) + Math.pow(creep.yPos - this.yPos, 2);
             if (distance < this.range * this.range && distance < shortestD) {
                 nearestCreep = creep;
@@ -68,7 +73,7 @@ function Projectile(x, y, grid, creep) {
 }
 
 Projectile.prototype.fire = function() { 
-    projectiles.push(this);
+    this.grid.projectiles.push(this);
 }
 
 Projectile.prototype.move = function(interval) {
@@ -86,7 +91,7 @@ Projectile.prototype.move = function(interval) {
     //If hit
     if (Math.abs(this.xPos - destX) < delta && Math.abs(this.yPos - destY) < delta || this.creep.hp <= 0) {
         this.creep.getHit(this.damage);
-        removeFromArr(projectiles, this);
+        removeFromArr(this.grid.projectiles, this);
         return true;
     }
 }
@@ -108,6 +113,10 @@ function Grid() {
     this.startY = Math.floor(this.rows/2);
     this.endX = this.cols - 1;
     this.endY = Math.floor(this.rows/2);
+    this.creeps = [];
+    this.towers = [];
+    this.projectiles = [];
+    this.draggingItem = false;
 
     for(var i = 0; i < this.grid.length; i++) {
         this.grid[i] = new Array(this.cols);
@@ -125,8 +134,6 @@ Grid.prototype.createGrid = function () {
 
     board.style.width = BLOCKSIZE * (this.cols) + "px";
     board.style.height = BLOCKSIZE * (this.rows) + "px";
-    //menu.style.left = BLOCKSIZE * (this.cols) + 200 + "px";
-    //menu.style.height = BLOCKSIZE * (this.rows) + 200 + "px";
 
     canvas = document.createElement('canvas');
     canvas.id = "canvas";
@@ -217,7 +224,7 @@ Grid.prototype.findShortestPath = function(startX, startY, endX, endY) {;
 
 Grid.prototype.sendCreep = function(Creep) {
     var creep = new Creep(this.startX, this.startY, this);
-    creeps.push(creep);
+    this.creeps.push(creep);
 };
 
 Grid.prototype.sendWave = function(Creep, number, timeout) {
@@ -239,14 +246,48 @@ Grid.prototype.sendWave = function(Creep, number, timeout) {
 
 Grid.prototype.buildTower = function(Tower, x , y) {
     if(this.inGrid(x,y)) {
-        var square = this.grid[y][x];
+        var square = this.grid[y][x],
+            i = 0,
+            creep,
+            tower,
+            content;
         square.canWalk = false;
+
         if (square.canBuild && this.findShortestPath(this.startX, this.startY, this.endX, this.endY)) {
-            var tower = new Tower(x, y, this);
+            tower = new Tower(x, y, this);
             square.canBuild = false;
             square.canWalk = false;
-            square.node.style.background = 'rgb(255, 0, 0)';
-            towers.push(tower);
+            square.node.style.background = tower.background;
+            $(square.node).popover({
+                trigger: 'hover',
+                html: 'true',
+                delay: 0,
+                content: function () {
+                    content = "<div> ";
+                    content += tower.name + " <br> ";
+                    content += "Cooldown: " + tower.cooldown + " <br> ";
+                    content += "Range: " + tower.range + " <br> ";
+                    return content;
+                },
+                placement: "auto top",
+            });
+            this.towers.push(tower);
+
+            for (i = 0; i < this.creeps.length; i++) {
+                creep = this.creeps[i];
+                if (creep.nextSquare.x === x && creep.nextSquare.y === y) { 
+                    var dir = creep.nextSquare.dir,
+                        reverse;
+                    if (dir === 'r') reverse = 'l';
+                    else if (dir === 'l') reverse = 'r';
+                    else if (dir === 'u') reverse = 'd';
+                    else if (dir === 'd') reverse = 'u';
+                    creep.nextSquare = {x: creep.currSquare.x, y: creep.currSquare.y, dir: reverse};
+                    //FIXME FIND BETTER WAY TO DO THIS
+                    creep.movelist = reverse + creep.movelist;
+                }
+            }
+            
             return true;
         }
         square.canWalk = true
@@ -267,7 +308,7 @@ function Creep(xPos, yPos, grid, movelist) {
 Creep.prototype.move = function(interval, speed) { 
     speed = speed || 1000;
     if (this.movelist === '') { 
-        removeFromArr(creeps, this);
+        removeFromArr(this.grid.creeps, this);
         return true;
     }
 
@@ -277,54 +318,68 @@ Creep.prototype.move = function(interval, speed) {
             this.movelist = this.grid.findShortestPath(Math.floor(this.xPos), Math.floor(this.yPos), this.grid.endX, this.grid.endY).moves;
             move = this.movelist.charAt(0);
         }
+
         this.currSquare = {x: this.xPos, y: this.yPos};
-        if (move === 'r') 
+        this.grid.grid[this.yPos][this.xPos].canBuild = false;
+
+        //FIXME Change r,l,d,u to an enum. Makes math/life easier
+        if (move === 'r') {
             this.nextSquare = {x: this.xPos + 1, y: this.yPos, dir: 'r'}
-        else if (move === 'l')
+        } else if (move === 'l') {
             this.nextSquare = {x: this.xPos - 1, y: this.yPos, dir: 'l'}
-        else if (move === 'd') 
+        } else if (move === 'd') {
             this.nextSquare = {x: this.xPos, y: this.yPos + 1, dir: 'd'}
-        else if (move === 'u')
+        } else if (move === 'u') {
             this.nextSquare = {x: this.xPos, y: this.yPos - 1, dir: 'u'}
-    }
-
-    if (move === 'r') 
-        this.xPos += interval / speed;
-    else if (move === 'l') 
-        this.xPos -= interval / speed;
-    else if (move === 'd') 
-        this.yPos += interval / speed;
-    else if (move === 'u') 
-        this.yPos -= interval / speed;
-
-    if (this.nextSquare) {
-        var dir = this.nextSquare.dir;
-        if (dir === 'r' && this.xPos >= this.nextSquare.x) { 
-            var difference = this.xPos - this.nextSquare.x;
-            this.xPos = this.nextSquare.x;
-            this.nextSquare = null;
-            return this.move(difference  * speed, speed);
-        } else if (dir === 'l' && this.xPos  <= this.nextSquare.x) {
-            var difference = this.nextSquare.x - this.xPos;
-            this.xPos = this.nextSquare.x;
-            this.nextSquare = null;
-            return this.move(difference  * speed, speed);
-        } else if (dir === 'd' && this.yPos  >= this.nextSquare.y) {
-            var difference = this.yPos - this.nextSquare.y;
-            this.yPos = this.nextSquare.y;
-            this.nextSquare = null;
-            return this.move(difference  * speed, speed);
-        } else if (dir === 'u' && this.yPos  <= this.nextSquare.y) {
-            var difference = this.nextSquare.y - this.yPos;
-            this.yPos = this.nextSquare.y;
-            this.nextSquare = null;
-            return this.move(difference  * speed, speed);
         }
     }
+
+    if (move === 'r') {
+        this.xPos += interval / speed;
+    } else if (move === 'l') {
+        this.xPos -= interval / speed;
+    } else if (move === 'd') {
+        this.yPos += interval / speed;
+    } else if (move === 'u') {
+        this.yPos -= interval / speed;
+    }
+
+    if (this.nextSquare) {
+        var dir = this.nextSquare.dir,
+            onNextSquare = false,
+            difference;
+
+        if (dir === 'r' && this.xPos >= this.nextSquare.x) { 
+            difference = this.xPos - this.nextSquare.x;
+            this.xPos = this.nextSquare.x;
+            onNextSquare = true;
+        } else if (dir === 'l' && this.xPos  <= this.nextSquare.x) {
+            difference = this.nextSquare.x - this.xPos;
+            this.xPos = this.nextSquare.x;
+            onNextSquare = true;
+        } else if (dir === 'd' && this.yPos  >= this.nextSquare.y) {
+            difference = this.yPos - this.nextSquare.y;
+            this.yPos = this.nextSquare.y;
+            onNextSquare = true;
+        } else if (dir === 'u' && this.yPos  <= this.nextSquare.y) {
+            difference = this.nextSquare.y - this.yPos;
+            this.yPos = this.nextSquare.y;
+            onNextSquare = true;
+        }
+
+        if (onNextSquare) {
+            this.nextSquare = null;
+            this.grid.grid[this.currSquare.y][this.currSquare.x].canBuild = true;
+            return this.move(difference  * speed, speed);
+        } else {
+            this.grid.grid[this.currSquare.y][this.currSquare.x].canBuild = false
+        }
+    }
+
     return false;
 };
 
-Creep.prototype.draw = function(canvas, ctx) {
+Creep.prototype.draw = function (canvas, ctx) {
     ctx.fillStyle = "black";
     ctx.beginPath();
     var offset = BLOCKSIZE / 2;
@@ -333,12 +388,19 @@ Creep.prototype.draw = function(canvas, ctx) {
     ctx.closePath();
 };
 
-Creep.prototype.getHit = function(damage) {
+Creep.prototype.getHit = function (damage) {
     if (this.hp > 0) {
         this.hp -= damage;
         if (this.hp <= 0) {
-            removeFromArr(creeps, this);
+            this.die();
         }
+    }
+}
+
+Creep.prototype.die = function () {
+    if (this.hp <= 0) {
+        removeFromArr(this.grid.creeps, this);
+        this.grid.grid[this.currSquare.y][this.currSquare.x].canBuild = true;
     }
 }
 
@@ -351,14 +413,23 @@ Menu.prototype.update = function() {
         i,
         node;
     for (i = 0; i < this.towerList.length; i++) {
+        tower = new this.towerList[i]();
         node = document.createElement('div');
         node.className = this.towerList[i].name;
+        node.style.background = tower.background;
+        node.style.width = BLOCKSIZE + "px";
+        node.style.height = BLOCKSIZE + "px";
         node.addEventListener("click", function (e) {
             draggingItem = this;
             mouseX = e.pageX;
             mouseY = e.pageY;
         });
         menuNode.appendChild(node);
+        $(node).popover({
+            placement: "left",
+            trigger: "hover",
+            content: "hello world",
+        });
     }
 }
         
@@ -389,47 +460,52 @@ grid.buildTower(Tower, 11, 5);
 var numOfCreeps = 10,
     prevTime;
 
-grid.sendWave(Creep, 20, 50)();
+grid.sendWave(Creep, 1, 50)();
     
 
 function draw(timestamp) { 
     prevTime = prevTime || timestamp;
     var canvas = document.getElementById("canvas"),
         ctx = canvas.getContext("2d"),
-        speed = 1000, 
+        speed = 300,
         hit = false,
         died = false,
         finished = true,
         interval = timestamp - prevTime;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (draggingItem) {
-        ctx.fillStyle = "red";
-        ctx.fillRect(mouseX - BLOCKSIZE/2 - 3, mouseY - BLOCKSIZE/2 - 3, BLOCKSIZE, BLOCKSIZE);
-    }
-
-    for (var i = 0; i < towers.length; i++) { 
-        towers[i].attack(interval);
-    }
-    
-    for (var i = 0; i < projectiles.length; i++) {
-        hit = projectiles[i].move(interval);
-        if (!hit) 
-            projectiles[i].draw(canvas, ctx);
-    }
-
-    for (var i = 0; i < creeps.length; i++) {
-        died = creeps[i].move(interval, speed);
-        if (!died) 
-            creeps[i].draw(canvas, ctx);
-    }
-
     prevTime = timestamp;
-    if (creeps.length || projectiles.length || grid.sending)
+    if (interval < 150) { 
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (draggingItem) {
+            ctx.fillStyle = draggingItem.style.background;
+            ctx.fillRect(mouseX - BLOCKSIZE/2 - 3, mouseY - BLOCKSIZE/2 - 3, BLOCKSIZE - 2, BLOCKSIZE - 2);
+        }
+
+        for (var i = 0; i < grid.towers.length; i++) { 
+            grid.towers[i].attack(interval);
+        }
+        
+        for (var i = 0; i < grid.projectiles.length; i++) {
+            hit = grid.projectiles[i].move(interval);
+            if (!hit) 
+                grid.projectiles[i].draw(canvas, ctx);
+        }
+
+        for (var i = 0; i < grid.creeps.length; i++) {
+            died = grid.creeps[i].move(interval, speed);
+            if (!died) 
+                grid.creeps[i].draw(canvas, ctx);
+        }
+
+        if (grid.creeps.length || grid.projectiles.length || grid.sending)
+            window.requestAnimationFrame(draw);
+        else {
+            //Level Finished TODO
+            window.requestAnimationFrame(draw);
+        } 
+    } else {
         window.requestAnimationFrame(draw);
-    else {
-        window.requestAnimationFrame(draw);
-    } 
+    }
 };
 
 function setup() { 
@@ -439,10 +515,12 @@ function setup() {
             var x = Math.floor(e.pageX / BLOCKSIZE),
                 y = Math.floor(e.pageY / BLOCKSIZE);
             grid.buildTower(window[draggingItem.className], x, y);
-            draggingItem = false;
+            if (!addMulitple)
+                draggingItem = false;
         }
     };
-    board.addEventListener("click", callback);
+    //board.addEventListener("click", callback);
+    $(board).click(callback);
     board.addEventListener("mousemove", function (e) {
         var canvas = document.getElementById("canvas"),
             ctx = canvas.getContext("2d");
@@ -451,6 +529,19 @@ function setup() {
             mouseY = e.pageY;
         }
     });
+
+    $(document).keydown(function (e) {
+        if (e.keyCode === 17) {
+            addMulitple = true;
+        } else if (e.keyCode === 27) {
+            draggingItem = false;
+        }
+    });
+
+    $(document).keyup(function (e) { 
+        addMulitple = false;
+    });
+
     menu = new Menu();
     menu.towerList.push(Tower);
     menu.update();
