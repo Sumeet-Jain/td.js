@@ -3,17 +3,27 @@ var BLOCKSIZE = 50,
     draggingItem = false,
     mouseX = null,
     mouseY = null,
+    requestId = 0,
     grid;
 
 function removeFromArr(array, element) {
     var index = array.indexOf(element);
-    if (index != -1)
+    if (index != -1) {
         array.splice(index, 1);
+    }
 };
 
 function Player() {
-    this.gold = 100;
+    this.gold = 10000;
     this.lives = 20
+}
+
+Player.prototype.dies = function() { 
+    if (this.lives <= 0) {
+        window.cancelAnimationFrame(requestId);
+        requestId = null;
+        //TODO Display death message.
+    }
 }
 
 function Square(x, y, node) {
@@ -117,6 +127,7 @@ function Grid() {
     this.towers = [];
     this.projectiles = [];
     this.draggingItem = false;
+    this.player = new Player();
 
     for(var i = 0; i < this.grid.length; i++) {
         this.grid[i] = new Array(this.cols);
@@ -135,6 +146,7 @@ Grid.prototype.createGrid = function () {
     board.style.width = BLOCKSIZE * (this.cols) + "px";
     board.style.height = BLOCKSIZE * (this.rows) + "px";
 
+    //MAYBE CHANGE DRAWING THE BACKGROUND TO A CANVAS. IDK
     canvas = document.createElement('canvas');
     canvas.id = "canvas";
     canvas.width = BLOCKSIZE * this.cols;
@@ -248,16 +260,20 @@ Grid.prototype.buildTower = function(Tower, x , y) {
     if(this.inGrid(x,y)) {
         var square = this.grid[y][x],
             i = 0,
+            tower = new Tower(x, y, this),
             creep,
             tower,
             content;
+
         square.canWalk = false;
 
-        if (square.canBuild && this.findShortestPath(this.startX, this.startY, this.endX, this.endY)) {
+        if (square.canBuild && this.player.gold > tower.cost &&
+                this.findShortestPath(this.startX, this.startY, this.endX, this.endY)) {
             tower = new Tower(x, y, this);
             square.canBuild = false;
             square.canWalk = false;
             square.node.style.background = tower.background;
+
             $(square.node).popover({
                 trigger: 'hover',
                 html: 'true',
@@ -271,6 +287,7 @@ Grid.prototype.buildTower = function(Tower, x , y) {
                 },
                 placement: "auto top",
             });
+
             this.towers.push(tower);
 
             for (i = 0; i < this.creeps.length; i++) {
@@ -283,11 +300,12 @@ Grid.prototype.buildTower = function(Tower, x , y) {
                     else if (dir === 'u') reverse = 'd';
                     else if (dir === 'd') reverse = 'u';
                     creep.nextSquare = {x: creep.currSquare.x, y: creep.currSquare.y, dir: reverse};
-                    //FIXME FIND BETTER WAY TO DO THIS
+                    //FIXME FIND BETTER WAY TO DO THIS.
                     creep.movelist = reverse + creep.movelist;
                 }
             }
             
+            this.player.gold -= tower.cost;
             return true;
         }
         square.canWalk = true
@@ -301,13 +319,25 @@ function Creep(xPos, yPos, grid, movelist) {
     GridObj.call(this, xPos, yPos, grid);
     this.currSquare = null;
     this.nextSquare = null;
+    this.damage = 1;
     this.movelist = movelist || this.grid.findShortestPath(this.xPos, this.yPos, grid.endX, grid.endY).moves;
     this.hp = 5;
+    this.gold = 10;
+};
+
+Creep.prototype.reachedEnd = function() {
+    if (this.xPos === this.grid.endX && this.yPos === this.grid.endY) {
+        this.grid.player.lives--;
+        if (this.grid.player.lives <= 0) {
+            this.grid.player.dies();
+        }
+    }
 };
 
 Creep.prototype.move = function(interval, speed) { 
     speed = speed || 1000;
     if (this.movelist === '') { 
+        this.reachedEnd();
         removeFromArr(this.grid.creeps, this);
         return true;
     }
@@ -322,7 +352,7 @@ Creep.prototype.move = function(interval, speed) {
         this.currSquare = {x: this.xPos, y: this.yPos};
         this.grid.grid[this.yPos][this.xPos].canBuild = false;
 
-        //FIXME Change r,l,d,u to an enum. Makes math/life easier
+        //FIXME Change r,l,d,u to an enum. Makes math/life easier. Beware of concatenation. Need to *10 + next or something
         if (move === 'r') {
             this.nextSquare = {x: this.xPos + 1, y: this.yPos, dir: 'r'}
         } else if (move === 'l') {
@@ -401,6 +431,7 @@ Creep.prototype.die = function () {
     if (this.hp <= 0) {
         removeFromArr(this.grid.creeps, this);
         this.grid.grid[this.currSquare.y][this.currSquare.x].canBuild = true;
+        this.grid.player.gold += this.gold;
     }
 }
 
@@ -460,7 +491,7 @@ grid.buildTower(Tower, 11, 5);
 var numOfCreeps = 10,
     prevTime;
 
-grid.sendWave(Creep, 1, 50)();
+grid.sendWave(Creep, 20, 50)();
     
 
 function draw(timestamp) { 
@@ -481,30 +512,40 @@ function draw(timestamp) {
             ctx.fillRect(mouseX - BLOCKSIZE/2 - 3, mouseY - BLOCKSIZE/2 - 3, BLOCKSIZE - 2, BLOCKSIZE - 2);
         }
 
-        for (var i = 0; i < grid.towers.length; i++) { 
-            grid.towers[i].attack(interval);
-        }
-        
-        for (var i = 0; i < grid.projectiles.length; i++) {
-            hit = grid.projectiles[i].move(interval);
-            if (!hit) 
-                grid.projectiles[i].draw(canvas, ctx);
+        if (grid.creeps.length) {
+            for (var i = 0; i < grid.towers.length; i++) { 
+                grid.towers[i].attack(interval);
+            }
+            
+            for (var i = 0; i < grid.projectiles.length; i++) {
+                hit = grid.projectiles[i].move(interval);
+                if (!hit) 
+                    grid.projectiles[i].draw(canvas, ctx);
+            }
+
+            for (var i = 0; i < grid.creeps.length; i++) {
+                died = grid.creeps[i].move(interval, speed);
+                if (!died) 
+                    grid.creeps[i].draw(canvas, ctx);
+            }
         }
 
-        for (var i = 0; i < grid.creeps.length; i++) {
-            died = grid.creeps[i].move(interval, speed);
-            if (!died) 
-                grid.creeps[i].draw(canvas, ctx);
-        }
-
-        if (grid.creeps.length || grid.projectiles.length || grid.sending)
-            window.requestAnimationFrame(draw);
-        else {
+        //TODO REFACTOR
+        if (grid.creeps.length || grid.projectiles.length || grid.sending) {
+            if (this.grid.player.lives > 0) {
+                requestId = window.requestAnimationFrame(draw);
+                return;
+            }
+        } else {
             //Level Finished TODO
-            window.requestAnimationFrame(draw);
+            if (this.grid.player.lives > 0) {
+                requestId = window.requestAnimationFrame(draw);
+                return;
+            }
         } 
     } else {
-        window.requestAnimationFrame(draw);
+        requestId = window.requestAnimationFrame(draw);
+        return;
     }
 };
 
@@ -519,7 +560,6 @@ function setup() {
                 draggingItem = false;
         }
     };
-    //board.addEventListener("click", callback);
     $(board).click(callback);
     board.addEventListener("mousemove", function (e) {
         var canvas = document.getElementById("canvas"),
@@ -545,7 +585,7 @@ function setup() {
     menu = new Menu();
     menu.towerList.push(Tower);
     menu.update();
-   window.requestAnimationFrame(draw);
+    requestId = window.requestAnimationFrame(draw);
 };
 
 setup();
