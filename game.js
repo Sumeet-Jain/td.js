@@ -158,11 +158,9 @@ Grid.prototype.createGrid = function () {
     board.style.height = BLOCKSIZE * (this.rows) + "px";
 
     //MAYBE CHANGE DRAWING THE BACKGROUND TO A CANVAS. IDK
-    canvas = document.createElement('canvas');
-    canvas.id = "canvas";
+    canvas = document.getElementById('canvas');
     canvas.width = BLOCKSIZE * this.cols;
     canvas.height = BLOCKSIZE * this.rows;
-    board.appendChild(canvas);
     for(y = 0; y < this.rows; y++) {
         for(x = 0; x < this.cols; x++) {
             squareNode = document.createElement('div');
