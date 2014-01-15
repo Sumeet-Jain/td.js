@@ -161,6 +161,7 @@ Grid.prototype.createGrid = function () {
     canvas = document.getElementById('canvas');
     canvas.width = BLOCKSIZE * this.cols;
     canvas.height = BLOCKSIZE * this.rows;
+
     for(y = 0; y < this.rows; y++) {
         for(x = 0; x < this.cols; x++) {
             squareNode = document.createElement('div');
