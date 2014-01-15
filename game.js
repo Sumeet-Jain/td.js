@@ -1,11 +1,15 @@
-var BLOCKSIZE = 50,
+//(function () {
+var
+    BLOCKSIZE = 50,
     addMulitple = false,
     draggingItem = false,
     mouseX = null,
     mouseY = null,
-    requestId = 0,
+    INTERVAL = 1000/60,
+    requestId = null,
     grid;
 
+//SHOULD USE LINKED LIST. WOULD BE FASTER
 function removeFromArr(array, element) {
     var index = array.indexOf(element);
     if (index != -1) {
@@ -13,6 +17,7 @@ function removeFromArr(array, element) {
     }
 };
 
+//PLAYER used to search/ jump in vim
 function Player() {
     this.gold = 10000;
     this.lives = 20
@@ -26,6 +31,7 @@ Player.prototype.dies = function() {
     }
 }
 
+//SQUARE
 function Square(x, y, node) {
     this.xPos = x || 0;
     this.yPos = y || 0;
@@ -34,6 +40,7 @@ function Square(x, y, node) {
     this.node = node;
 };
 
+//GRIDOBJ
 function GridObj(x, y, grid) {
     this.xPos = x || 0;
     this.yPos = y || 0;
@@ -42,6 +49,7 @@ function GridObj(x, y, grid) {
 
 Tower.prototype = new GridObj();
 
+//TOWER
 function Tower(x, y, grid) {
     GridObj.call(this, x, y, grid);
     this.name = 'Basic';
@@ -74,6 +82,7 @@ Tower.prototype.attack = function(interval) {
     }
 };
 
+//PROJECTILE
 Projectile.prototype = new GridObj();
 function Projectile(x, y, grid, creep) {
     GridObj.call(this, x, y, grid);
@@ -115,6 +124,7 @@ Projectile.prototype.draw = function(canvas, ctx) {
     ctx.closePath();
 }
 
+//GRID
 function Grid() {
     this.rows = 10;
     this.cols = 20;
@@ -128,6 +138,7 @@ function Grid() {
     this.projectiles = [];
     this.draggingItem = false;
     this.player = new Player();
+    this.prevTime = (new Date).getTime();
 
     for(var i = 0; i < this.grid.length; i++) {
         this.grid[i] = new Array(this.cols);
@@ -239,6 +250,8 @@ Grid.prototype.sendCreep = function(Creep) {
     this.creeps.push(creep);
 };
 
+//Need to deal with the set interval issue when alt tabbing. 
+//Harder than moveEverything since there needs to be a gap;
 Grid.prototype.sendWave = function(Creep, number, timeout) {
     timeout = timeout || 250;
     var grid = this;
@@ -269,9 +282,7 @@ Grid.prototype.buildTower = function(Tower, x , y) {
 
         if (square.canBuild && this.player.gold > tower.cost &&
                 this.findShortestPath(this.startX, this.startY, this.endX, this.endY)) {
-            tower = new Tower(x, y, this);
             square.canBuild = false;
-            square.canWalk = false;
             square.node.style.background = tower.background;
 
             $(square.node).popover({
@@ -292,7 +303,7 @@ Grid.prototype.buildTower = function(Tower, x , y) {
 
             for (i = 0; i < this.creeps.length; i++) {
                 creep = this.creeps[i];
-                if (creep.nextSquare.x === x && creep.nextSquare.y === y) { 
+                if (creep.nextSquare && creep.nextSquare.x === x && creep.nextSquare.y === y) { 
                     var dir = creep.nextSquare.dir,
                         reverse;
                     if (dir === 'r') reverse = 'l';
@@ -300,7 +311,6 @@ Grid.prototype.buildTower = function(Tower, x , y) {
                     else if (dir === 'u') reverse = 'd';
                     else if (dir === 'd') reverse = 'u';
                     creep.nextSquare = {x: creep.currSquare.x, y: creep.currSquare.y, dir: reverse};
-                    //FIXME FIND BETTER WAY TO DO THIS.
                     creep.movelist = reverse + creep.movelist;
                 }
             }
@@ -313,8 +323,46 @@ Grid.prototype.buildTower = function(Tower, x , y) {
     return false;
 };
 
-Creep.prototype = new GridObj();
 
+Grid.prototype.moveEverything = function () {
+    var grid = this;
+    function mover(interval, doNotUpdate) {
+        interval = interval ||  (new Date).getTime() - grid.prevTime;
+        var i = 0;
+
+        if (grid.creeps.length) {
+            if (interval > INTERVAL + 5) {
+                console.log(interval);
+                for (i  = 0; i < interval / INTERVAL; i++) {
+                    mover(INTERVAL, true);
+                }
+                mover(interval % INTERVAL);
+            } else { 
+                for (i = 0; i < grid.towers.length; i++) { 
+                    grid.towers[i].attack(interval);
+                }
+                
+                for (i = 0; i < grid.projectiles.length; i++) {
+                    grid.projectiles[i].move(interval);
+                }
+
+                for (i = 0; i < grid.creeps.length; i++) {
+                    grid.creeps[i].move(interval);
+                }
+            }
+        }
+
+        if (!doNotUpdate) { 
+            grid.prevTime = (new Date).getTime(); 
+        }
+    }
+    return mover;
+}
+
+
+
+//CREEP
+Creep.prototype = new GridObj();
 function Creep(xPos, yPos, grid, movelist) { 
     GridObj.call(this, xPos, yPos, grid);
     this.currSquare = null;
@@ -323,6 +371,7 @@ function Creep(xPos, yPos, grid, movelist) {
     this.movelist = movelist || this.grid.findShortestPath(this.xPos, this.yPos, grid.endX, grid.endY).moves;
     this.hp = 5;
     this.gold = 10;
+    this.speed = 300;
 };
 
 Creep.prototype.reachedEnd = function() {
@@ -335,7 +384,7 @@ Creep.prototype.reachedEnd = function() {
 };
 
 Creep.prototype.move = function(interval, speed) { 
-    speed = speed || 1000;
+    speed = speed || this.speed;
     if (this.movelist === '') { 
         this.reachedEnd();
         removeFromArr(this.grid.creeps, this);
@@ -352,7 +401,8 @@ Creep.prototype.move = function(interval, speed) {
         this.currSquare = {x: this.xPos, y: this.yPos};
         this.grid.grid[this.yPos][this.xPos].canBuild = false;
 
-        //FIXME Change r,l,d,u to an enum. Makes math/life easier. Beware of concatenation. Need to *10 + next or something
+        //OPTIMIZATION Change r,l,d,u to an enum. Makes math/life easier. Beware of concatenation.
+        //Probs make it a 4bit array or something
         if (move === 'r') {
             this.nextSquare = {x: this.xPos + 1, y: this.yPos, dir: 'r'}
         } else if (move === 'l') {
@@ -435,6 +485,7 @@ Creep.prototype.die = function () {
     }
 }
 
+//MENU
 function Menu() {
     this.towerList = [];
 }
@@ -491,9 +542,8 @@ grid.buildTower(Tower, 11, 5);
 var numOfCreeps = 10,
     prevTime;
 
-grid.sendWave(Creep, 20, 50)();
+grid.sendWave(Creep, 40, 100)();
     
-
 function draw(timestamp) { 
     prevTime = prevTime || timestamp;
     var canvas = document.getElementById("canvas"),
@@ -507,47 +557,27 @@ function draw(timestamp) {
     prevTime = timestamp;
     if (interval < 150) { 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+
         if (draggingItem) {
             ctx.fillStyle = draggingItem.style.background;
             ctx.fillRect(mouseX - BLOCKSIZE/2 - 3, mouseY - BLOCKSIZE/2 - 3, BLOCKSIZE - 2, BLOCKSIZE - 2);
         }
 
         if (grid.creeps.length) {
-            for (var i = 0; i < grid.towers.length; i++) { 
-                grid.towers[i].attack(interval);
-            }
-            
             for (var i = 0; i < grid.projectiles.length; i++) {
-                hit = grid.projectiles[i].move(interval);
-                if (!hit) 
-                    grid.projectiles[i].draw(canvas, ctx);
+                grid.projectiles[i].draw(canvas, ctx);
             }
 
             for (var i = 0; i < grid.creeps.length; i++) {
-                died = grid.creeps[i].move(interval, speed);
-                if (!died) 
-                    grid.creeps[i].draw(canvas, ctx);
+                grid.creeps[i].draw(canvas, ctx);
             }
         }
+    } 
 
-        //TODO REFACTOR
-        if (grid.creeps.length || grid.projectiles.length || grid.sending) {
-            if (this.grid.player.lives > 0) {
-                requestId = window.requestAnimationFrame(draw);
-                return;
-            }
-        } else {
-            //Level Finished TODO
-            if (this.grid.player.lives > 0) {
-                requestId = window.requestAnimationFrame(draw);
-                return;
-            }
-        } 
-    } else {
+    if (requestId) {
         requestId = window.requestAnimationFrame(draw);
-        return;
     }
-};
+}
 
 function setup() { 
     var board = document.getElementById('board');
@@ -571,7 +601,7 @@ function setup() {
     });
 
     $(document).keydown(function (e) {
-        if (e.keyCode === 17) {
+        if (e.keyCode === 'A'.charCodeAt(0)) {
             addMulitple = true;
         } else if (e.keyCode === 27) {
             draggingItem = false;
@@ -586,6 +616,8 @@ function setup() {
     menu.towerList.push(Tower);
     menu.update();
     requestId = window.requestAnimationFrame(draw);
+    setInterval(grid.moveEverything(), INTERVAL);
 };
 
 setup();
+//})();
